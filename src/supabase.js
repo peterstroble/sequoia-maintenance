@@ -28,7 +28,22 @@ const toRow = (t) => ({
   scheduled_by: t.scheduledBy || '',
   pm_id:        t.pmId        || '',
   created_at:   t.createdAt   || new Date().toISOString(),
+  progress_status:          t.progressStatus         || 'On Track',
+  original_scheduled_date:  t.originalScheduledDate   || null,
+  reschedule_count:         +t.rescheduleCount        || 0,
 })
+
+// Columns that may not exist yet on older databases — dropped from the
+// upsert payload and retried once if Postgres/PostgREST reports them missing.
+const OPTIONAL_COLUMNS = ['progress_status', 'original_scheduled_date', 'reschedule_count']
+const isMissingColumnError = (error) =>
+  !!error && (error.code === '42703' || error.code === 'PGRST204' ||
+    /column .* does not exist|could not find.*column/i.test(error.message || ''))
+const withoutOptionalColumns = (row) => {
+  const copy = { ...row }
+  OPTIONAL_COLUMNS.forEach(c => delete copy[c])
+  return copy
+}
 
 const fromRow = (r) => ({
   id:           r.id,
@@ -53,6 +68,9 @@ const fromRow = (r) => ({
   pmId:         r.pm_id,
   createdAt:    r.created_at,
   updatedAt:    r.updated_at,
+  progressStatus:         r.progress_status || 'On Track',
+  originalScheduledDate:  r.original_scheduled_date ? r.original_scheduled_date.slice(0,10) : '',
+  rescheduleCount:        r.reschedule_count || 0,
 })
 
 const pmToRow = (p) => ({
@@ -91,10 +109,16 @@ export const db = {
 
   // Upsert a single task
   async saveTask(task) {
-    const { error } = await supabase
-      .from('tasks')
-      .upsert(toRow(task), { onConflict: 'id' })
-    if (error) throw error
+    const row = toRow(task)
+    const { error } = await supabase.from('tasks').upsert(row, { onConflict: 'id' })
+    if (error) {
+      if (!isMissingColumnError(error)) throw error
+      console.warn('tasks table is missing new columns — run the migration in supabase/migrations. Saving without them for now.')
+      const { error: retryError } = await supabase
+        .from('tasks')
+        .upsert(withoutOptionalColumns(row), { onConflict: 'id' })
+      if (retryError) throw retryError
+    }
   },
 
   // Upsert multiple tasks
@@ -103,10 +127,16 @@ export const db = {
     const rows = tasks.map(toRow)
     // Batch in chunks of 500
     for (let i = 0; i < rows.length; i += 500) {
-      const { error } = await supabase
-        .from('tasks')
-        .upsert(rows.slice(i, i+500), { onConflict: 'id' })
-      if (error) throw error
+      const batch = rows.slice(i, i+500)
+      const { error } = await supabase.from('tasks').upsert(batch, { onConflict: 'id' })
+      if (error) {
+        if (!isMissingColumnError(error)) throw error
+        console.warn('tasks table is missing new columns — run the migration in supabase/migrations. Saving without them for now.')
+        const { error: retryError } = await supabase
+          .from('tasks')
+          .upsert(batch.map(withoutOptionalColumns), { onConflict: 'id' })
+        if (retryError) throw retryError
+      }
     }
   },
 
