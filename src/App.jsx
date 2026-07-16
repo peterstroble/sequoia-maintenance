@@ -18,6 +18,11 @@ const PRIORITY_LABEL = p => p>=9?"Critical":p>=7?"High":p>=5?"Medium":p>=3?"Low"
 const PRIORITY_COLOR = p => p>=9?B.brick:p>=7?B.rust:p>=5?B.gold:p>=3?B.teal:B.muted;
 const TYPE_COLOR = { Project:B.orange, PM:B.teal, Compliance:B.brick, Repair:B.gold };
 
+// Schedule-tab progress cycle: On Track (green) → Marginal (yellow) → Behind (red)
+const PROGRESS_STATUSES = ["On Track","Marginal","Behind"];
+const PROGRESS_COLOR = { "On Track":"#2E7D32", "Marginal":B.gold, "Behind":B.brick };
+const nextProgressStatus = (s) => PROGRESS_STATUSES[(PROGRESS_STATUSES.indexOf(s)+1)%PROGRESS_STATUSES.length];
+
 // Task ID prefix — sequential per type, derived from existing tasks
 const TASK_PREFIX = { Project:"P", PM:"M", Compliance:"C", Repair:"R" };
 const nextTaskId = (type, existingTasks) => {
@@ -313,7 +318,7 @@ function TaskForm({task, settings, onSave, onClose, pmItems}) {
 
 // ─── SCHEDULE MODAL ───────────────────────────────────────────────────────────
 function ScheduleModal({task, settings, onSave, onClose}) {
-  const [weekOf,  setWeekOf]  = useState(nextMonday());
+  const [weekOf,  setWeekOf]  = useState(task?.weekOf || nextMonday());
   const [assignee,setAssignee]= useState(task?.assignee||"");
   const [hours,   setHours]   = useState(task?.weeklyHours||task?.estHours||"");
   const team = settings?.team||DEFAULT_SETTINGS.team;
@@ -391,8 +396,7 @@ function InboxView({tasks, setTasks, settings, onEdit}) {
   const inbox = tasks.filter(t=>t.status==="Inbox");
   const move  = (id,status) => setTasks(ts=>ts.map(t=>t.id===id?{...t,status}:t));
   const del   = (id) => { if(window.confirm("Delete this task?")) {
-    setTasksRaw(ts=>ts.filter(t=>t.id!==id));
-    persistTaskDelete(id);
+    setTasks(ts=>ts.filter(t=>t.id!==id));
   }};
 
   return (
@@ -440,8 +444,7 @@ function QueueView({tasks, setTasks, settings, onEdit, onSchedule}) {
 
   const move = (id,status) => setTasks(ts=>ts.map(t=>t.id===id?{...t,status}:t));
   const del  = (id) => { if(window.confirm("Delete this task?")) {
-    setTasksRaw(ts=>ts.filter(t=>t.id!==id));
-    persistTaskDelete(id);
+    setTasks(ts=>ts.filter(t=>t.id!==id));
   }};
 
   const filterBtn = (val,cur,set,label) => (
@@ -488,35 +491,36 @@ function QueueView({tasks, setTasks, settings, onEdit, onSchedule}) {
 }
 
 // ─── SCHEDULE VIEW ────────────────────────────────────────────────────────────
-function ScheduleView({tasks, setTasks, setPMItems, settings, selectedWeek, setSelectedWeek, onEdit}) {
+function ScheduleView({tasks, setTasks, pmItems, setPMItems, settings, selectedWeek, setSelectedWeek, onEdit, onReschedule}) {
   const team = settings?.team||DEFAULT_SETTINGS.team;
 
   const weekTasks = tasks.filter(t=>t.status==="Scheduled" && t.weekOf===selectedWeek);
 
   const markDone = (id) => {
     const task = tasks.find(t=>t.id===id);
+    if(!task) return;
     const completed = {...task, status:"Complete",
-      completedBy: task?.assignee||currentUser(),
+      completedBy: task.assignee||currentUser(),
       completedAt: new Date().toISOString()};
-    // Save completed task directly to Supabase
-    setTasksRaw(ts=>ts.map(t=>t.id===id?completed:t));
-    persistTask(completed);
+    setTasks(ts=>ts.map(t=>t.id===id?completed:t), completed);
     // If PM task, update lastDone in register with flexible machine matching
-    if(task?.type==="PM" && task?.machine) {
-      setPMItemsRaw(pms=>{
-        return pms.map(p=>{
-          const match = p.machine===task.machine ||
-            (p.dept===task.dept && (
-              p.machine.toLowerCase().includes((task.machine||"").toLowerCase()) ||
-              (task.machine||"").toLowerCase().includes(p.machine.toLowerCase())
-            ));
-          if(!match) return p;
-          const u = {...p, lastDone:todayStr()};
-          db.updatePMItem(u).catch(e=>console.error("PM lastDone save failed:",e));
-          return u;
-        });
-      });
+    if(task.type==="PM" && task.machine) {
+      const match = (pmItems||[]).find(p=>p.machine===task.machine ||
+        (p.dept===task.dept && (
+          p.machine.toLowerCase().includes((task.machine||"").toLowerCase()) ||
+          (task.machine||"").toLowerCase().includes(p.machine.toLowerCase())
+        )));
+      if(match) {
+        const updatedPM = {...match, lastDone:todayStr()};
+        setPMItems(pms=>pms.map(p=>p.id===match.id?updatedPM:p), updatedPM);
+      }
     }
+  };
+  const cycleProgress = (id) => {
+    const task = tasks.find(t=>t.id===id);
+    if(!task) return;
+    const updated = {...task, progressStatus: nextProgressStatus(task.progressStatus||"On Track")};
+    setTasks(ts=>ts.map(t=>t.id===id?updated:t), updated);
   };
   const returnToQueue = (id) => setTasks(ts=>ts.map(t=>t.id===id
     ?{...t,status:"Queue",assignee:"",weekOf:"",weeklyHours:""}:t));
@@ -595,17 +599,32 @@ function ScheduleView({tasks, setTasks, setPMItems, settings, selectedWeek, setS
                     </div>
                     {myTasks.length===0
                       ? <div style={{color:B.muted,fontSize:12,fontStyle:"italic",...sf}}>No tasks scheduled</div>
-                      : myTasks.map(t=>(
+                      : myTasks.map(t=>{
+                        const progress = t.progressStatus||"On Track";
+                        return (
                         <div key={t.id} style={{borderTop:`1px solid ${B.border}`,paddingTop:8,marginTop:8}}>
-                          <div style={{display:"flex",gap:4,marginBottom:4}}>
+                          <div style={{display:"flex",gap:4,marginBottom:4,alignItems:"center",flexWrap:"wrap"}}>
                             <Badge color={TYPE_COLOR[t.type]||B.muted}>{t.type}</Badge>
                             <span style={{fontSize:10,color:B.muted,...sf}}>#{t.id}</span>
+                            <button onClick={()=>cycleProgress(t.id)} title="Click to cycle status"
+                              style={{marginLeft:"auto",cursor:"pointer",border:`1px solid ${PROGRESS_COLOR[progress]}66`,
+                                background:PROGRESS_COLOR[progress]+"22",color:PROGRESS_COLOR[progress],
+                                borderRadius:3,padding:"2px 8px",fontSize:10,fontWeight:700,...sf}}>
+                              ● {progress}
+                            </button>
                           </div>
                           <div style={{fontSize:12,color:B.text,fontWeight:600,marginBottom:4,...sf}}>{t.title}</div>
                           <div style={{fontSize:11,color:B.muted,marginBottom:6,...sf}}>
                             {t.weeklyHours}h this week · {t.hoursLogged||0}h logged
                             {t.estHours && ` · ${t.estHours}h est.`}
                           </div>
+                          {(t.originalScheduledDate || +t.rescheduleCount>0) && (
+                            <div style={{fontSize:10,color:B.muted,marginBottom:6,...sf}}>
+                              {t.originalScheduledDate && <>First scheduled {fmtDate(t.originalScheduledDate)}</>}
+                              {t.originalScheduledDate && +t.rescheduleCount>0 && " · "}
+                              {+t.rescheduleCount>0 && <>Rescheduled {t.rescheduleCount}×</>}
+                            </div>
+                          )}
                           {/* Progress bar */}
                           <div style={{height:4,background:B.surface2,borderRadius:2,marginBottom:6}}>
                             <div style={{height:"100%",width:`${Math.min(100,Math.round((+t.hoursLogged||0)/(+t.estHours||1)*100))}%`,
@@ -615,10 +634,11 @@ function ScheduleView({tasks, setTasks, setPMItems, settings, selectedWeek, setS
                             <HoursLogger task={t} onLog={add=>logHours(t.id,add)}/>
                             <Btn style={{padding:"3px 8px",fontSize:10}} onClick={()=>markDone(t.id)}>✓ Done</Btn>
                             <Btn variant="secondary" style={{padding:"3px 8px",fontSize:10}} onClick={()=>onEdit(t)}>Edit</Btn>
+                            {onReschedule && <Btn variant="secondary" style={{padding:"3px 8px",fontSize:10}} onClick={()=>onReschedule(t)}>Reschedule</Btn>}
                             <Btn variant="secondary" style={{padding:"3px 8px",fontSize:10}} onClick={()=>returnToQueue(t.id)}>↩</Btn>
                           </div>
                         </div>
-                      ))
+                      );})
                     }
                   </div>
                 );
@@ -880,6 +900,17 @@ function ComplianceView({tasks, setTasks, onEdit}) {
 
   const move = (id,status) => setTasks(ts=>ts.map(t=>t.id===id?{...t,status}:t));
 
+  const complianceTasks = tasks.filter(t=>t.type==="Compliance");
+  const daysAgo = (n) => { const d=new Date(); d.setDate(d.getDate()-n); return d; };
+  const completedSince = (n) => complianceTasks.filter(t=>
+    t.status==="Complete" && t.completedAt && new Date(t.completedAt)>=daysAgo(n)).length;
+  const tiles = [
+    {label:"Outstanding",              value:tasks.filter(t=>t.status==="Compliance Register").length, color:B.brick},
+    {label:"Completed Last 7 Days",    value:completedSince(7),  color:B.teal},
+    {label:"Completed Last 30 Days",   value:completedSince(30), color:B.teal},
+    {label:"Total Remaining",          value:complianceTasks.filter(t=>t.status!=="Complete").length, color:B.rust},
+  ];
+
   const fBtn = (val,cur,set,color=B.brick) => (
     <button onClick={()=>set(v=>v===val?"All":val)}
       style={{padding:"4px 10px",borderRadius:3,fontSize:11,fontWeight:700,cursor:"pointer",
@@ -904,6 +935,17 @@ function ComplianceView({tasks, setTasks, onEdit}) {
           <h2 style={{margin:0,fontSize:18,fontWeight:700,color:B.text,...sf}}>Compliance Register</h2>
           <div style={{color:B.muted,fontSize:12,...sf}}>{items.length} open items</div>
         </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",
+        gap:10,marginBottom:16}}>
+        {tiles.map(({label,value,color})=>(
+          <div key={label} style={{background:"#fff",border:`1px solid ${B.border}`,
+            borderLeft:`3px solid ${color}`,borderRadius:5,padding:"10px 14px"}}>
+            <div style={{fontSize:10,color:B.muted,textTransform:"uppercase",letterSpacing:1,
+              marginBottom:4,...sf}}>{label}</div>
+            <div style={{fontSize:22,fontWeight:800,color,...sf}}>{value}</div>
+          </div>
+        ))}
       </div>
       <div style={{background:B.surface2,border:`1px solid ${B.border}`,borderRadius:5,
         padding:12,marginBottom:12}}>
@@ -1467,7 +1509,6 @@ function PMRegisterView({pmItems, setPMItems, tasks, setTasks, partsData, setPar
             } : null}
             onClose={()=>{setEditItem(null);setShowAdd(false);}}
           />
-          />
         </Modal>
       )}
     </div>
@@ -1748,8 +1789,15 @@ export default function App({user, idToken, accessToken}) {
   };
 
   const saveSchedule = (t) => {
-    setTasksRaw(prev=>prev.map(x=>x.id===t.id?t:x));
-    persistTask(t);
+    const prev = tasks.find(x=>x.id===t.id);
+    const weekChanged = !!prev?.weekOf && prev.weekOf!==t.weekOf;
+    const scheduled = {
+      ...t,
+      originalScheduledDate: prev?.originalScheduledDate || t.weekOf,
+      rescheduleCount: weekChanged ? (+prev.rescheduleCount||0)+1 : (+prev?.rescheduleCount||0),
+    };
+    setTasksRaw(prevTasks=>prevTasks.map(x=>x.id===scheduled.id?scheduled:x));
+    persistTask(scheduled);
     setScheduleTask(null);
   };
 
@@ -1787,6 +1835,9 @@ export default function App({user, idToken, accessToken}) {
           addedBy:r.added_by, completedBy:r.completed_by,
           completedAt:r.completed_at, scheduledBy:r.scheduled_by,
           pmId:r.pm_id, createdAt:r.created_at,
+          progressStatus:r.progress_status||'On Track',
+          originalScheduledDate:r.original_scheduled_date?r.original_scheduled_date.slice(0,10):'',
+          rescheduleCount:r.reschedule_count||0,
         });
         const updated = fromRow(newRow);
         if(eventType === 'INSERT') {
@@ -1878,7 +1929,7 @@ export default function App({user, idToken, accessToken}) {
       <div style={{maxWidth:1100,margin:"0 auto",padding:24}}>
         {activeTab==="inbox"     && <InboxView tasks={tasks} setTasks={setTasks} settings={safeSettings} onEdit={setEditTask}/>}
         {activeTab==="queue"     && <QueueView tasks={tasks} setTasks={setTasks} settings={safeSettings} onEdit={setEditTask} onSchedule={setScheduleTask}/>}
-        {activeTab==="schedule"  && <ScheduleView tasks={tasks} setTasks={setTasks} setPMItems={setPMItems} settings={safeSettings} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} onEdit={setEditTask}/>}
+        {activeTab==="schedule"  && <ScheduleView tasks={tasks} setTasks={setTasks} pmItems={pmItems} setPMItems={setPMItems} settings={safeSettings} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} onEdit={setEditTask} onReschedule={setScheduleTask}/>}
         {activeTab==="projects"  && <ProjectsRegisterView tasks={tasks} setTasks={setTasks} settings={safeSettings} onEdit={setEditTask}/>}
         {activeTab==="pm"        && <PMRegisterView pmItems={pmItems} setPMItems={setPMItems} tasks={tasks} setTasks={setTasks} partsData={partsData} setPartsData={setPartsData}/>}
         {activeTab==="repairs"   && <RepairsView tasks={tasks} setTasks={setTasks} onEdit={setEditTask}/>}
