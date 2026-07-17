@@ -97,6 +97,10 @@ const DEFAULT_SETTINGS = {
       {name:"Jayce Coovert", hours:40},
     ],
   },
+  escalation: {
+    emails: [],
+    threshold: 4,
+  },
 };
 
 // ─── SEED DATA (PM Register - 25 machines) ────────────────────────────────────
@@ -493,8 +497,10 @@ function QueueView({tasks, setTasks, settings, onEdit, onSchedule}) {
 // ─── SCHEDULE VIEW ────────────────────────────────────────────────────────────
 function ScheduleView({tasks, setTasks, pmItems, setPMItems, settings, selectedWeek, setSelectedWeek, onEdit, onReschedule}) {
   const team = settings?.team||DEFAULT_SETTINGS.team;
+  const codeRedThreshold = +(settings?.escalation?.threshold) || 4;
 
   const weekTasks = tasks.filter(t=>t.status==="Scheduled" && t.weekOf===selectedWeek);
+  const codeRedTasks = tasks.filter(t=>t.status==="Scheduled" && (+t.rescheduleCount||0)>=codeRedThreshold);
 
   const markDone = (id) => {
     const task = tasks.find(t=>t.id===id);
@@ -552,6 +558,29 @@ function ScheduleView({tasks, setTasks, pmItems, setPMItems, settings, selectedW
         </div>
       </div>
 
+      {codeRedTasks.length>0 && (
+        <div style={{background:B.brick+"15",border:`1px solid ${B.brick}55`,borderRadius:6,
+          padding:"12px 16px",marginBottom:20}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+            <span style={{fontSize:16}}>🔴</span>
+            <span style={{fontWeight:800,fontSize:13,color:B.brick,...sf}}>
+              Code Red — {codeRedTasks.length} task{codeRedTasks.length!==1?"s":""} rescheduled {codeRedThreshold}+ times
+            </span>
+          </div>
+          {codeRedTasks.map(t=>(
+            <div key={t.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+              padding:"6px 10px",background:"#fff",borderRadius:4,marginBottom:4,fontSize:12,...sf}}>
+              <span style={{color:B.text,fontWeight:600}}>#{t.id} · {t.title}</span>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                <span style={{color:B.brick,fontWeight:700}}>Rescheduled {t.rescheduleCount}×</span>
+                <Btn variant="secondary" style={{padding:"3px 8px",fontSize:10}}
+                  onClick={()=>setSelectedWeek(t.weekOf)}>View week</Btn>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {Object.entries(team).map(([dept,members])=>{
         const {cap,sched,bal} = deptSummary(dept);
         const pct = cap>0?Math.round(sched/cap*100):0;
@@ -601,11 +630,13 @@ function ScheduleView({tasks, setTasks, pmItems, setPMItems, settings, selectedW
                       ? <div style={{color:B.muted,fontSize:12,fontStyle:"italic",...sf}}>No tasks scheduled</div>
                       : myTasks.map(t=>{
                         const progress = t.progressStatus||"On Track";
+                        const isCodeRed = (+t.rescheduleCount||0)>=codeRedThreshold;
                         return (
                         <div key={t.id} style={{borderTop:`1px solid ${B.border}`,paddingTop:8,marginTop:8}}>
                           <div style={{display:"flex",gap:4,marginBottom:4,alignItems:"center",flexWrap:"wrap"}}>
                             <Badge color={TYPE_COLOR[t.type]||B.muted}>{t.type}</Badge>
                             <span style={{fontSize:10,color:B.muted,...sf}}>#{t.id}</span>
+                            {isCodeRed && <Badge color={B.brick}>🔴 Code Red</Badge>}
                             <button onClick={()=>cycleProgress(t.id)} title="Click to cycle status"
                               style={{marginLeft:"auto",cursor:"pointer",border:`1px solid ${PROGRESS_COLOR[progress]}66`,
                                 background:PROGRESS_COLOR[progress]+"22",color:PROGRESS_COLOR[progress],
@@ -1341,6 +1372,16 @@ function PMRegisterView({pmItems, setPMItems, tasks, setTasks, partsData, setPar
   const daysColor = (days) => days<0?B.brick:days<=7?B.gold:B.teal;
   const daysLabel = (days) => days<0?`${Math.abs(days)}d overdue`:days===0?"Due today":`${days}d`;
 
+  const pmMatchesTask = (t, p) => t.type==="PM" && t.dept===p.dept && (
+    t.pmId===p.id ||
+    t.machine===p.machine ||
+    (t.machine||"").toLowerCase()===p.machine.toLowerCase() ||
+    p.machine.toLowerCase().includes((t.machine||"").toLowerCase()) ||
+    (t.machine||"").toLowerCase().includes(p.machine.toLowerCase())
+  );
+  const thisWeekMon = monStart(todayStr());
+  const nextWeekMon = nextMonday();
+
   return (
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
@@ -1401,16 +1442,13 @@ function PMRegisterView({pmItems, setPMItems, tasks, setTasks, partsData, setPar
             }).map((p,i)=>{
               const days = daysUntilDue(p.lastDone, p.frequency);
               const status = pmStatus(days);
-              const activeTask = tasks.find(t=>t.type==="PM"
-                && ["Queue","Inbox","Scheduled"].includes(t.status)
-                && t.dept===p.dept
-                && (
-                  t.pmId===p.id ||
-                  t.machine===p.machine ||
-                  (t.machine||"").toLowerCase()===p.machine.toLowerCase() ||
-                  p.machine.toLowerCase().includes((t.machine||"").toLowerCase()) ||
-                  (t.machine||"").toLowerCase().includes(p.machine.toLowerCase())
-                ));
+              const activeTask = tasks.find(t=>
+                ["Queue","Inbox","Scheduled"].includes(t.status) && pmMatchesTask(t,p));
+              const scheduledThisWeek = tasks.some(t=>
+                t.status==="Scheduled" && t.weekOf===thisWeekMon && pmMatchesTask(t,p));
+              const queuedNextWeek = tasks.some(t=>
+                ["Queue","Inbox","Scheduled"].includes(t.status) && t.weekOf===nextWeekMon && pmMatchesTask(t,p));
+              const showNextWeekPrompt = p.frequency==="Weekly" && scheduledThisWeek && !queuedNextWeek;
               return (
                 <tr key={p.id} style={{borderBottom:i<pmItems.length-1?`1px solid ${B.border}`:"none",
                   background:i%2===0?"#fff":B.bg+"88"}}>
@@ -1466,6 +1504,14 @@ function PMRegisterView({pmItems, setPMItems, tasks, setTasks, partsData, setPar
                             ● {activeTask.status==="Scheduled"?"Scheduled":"In Queue"}
                           </span>
                       }
+                      {showNextWeekPrompt && (
+                        <button onClick={()=>queueEarly(p)} title="No PM queued for next week yet"
+                          style={{fontSize:10,color:B.gold,background:B.gold+"18",
+                            border:`1px solid ${B.gold}55`,borderRadius:3,padding:"2px 7px",
+                            cursor:"pointer",fontWeight:700,...sf}}>
+                          Queue next week?
+                        </button>
+                      )}
                     </div>
                   </td>
                   <td style={{padding:"10px 12px"}}>
@@ -1515,9 +1561,86 @@ function PMRegisterView({pmItems, setPMItems, tasks, setTasks, partsData, setPar
   );
 }
 
+// ─── SIDEBAR ─────────────────────────────────────────────────────────────────
+const REGISTER_TABS = ["projects","pm","repairs","compliance"];
+function Sidebar({activeTab, setActiveTab, inboxCount}) {
+  const [registersOpen, setRegistersOpen] = useState(REGISTER_TABS.includes(activeTab));
+
+  const itemStyle = (id, indent=14) => ({
+    display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",
+    textAlign:"left",padding:`8px 14px 8px ${indent}px`,border:"none",cursor:"pointer",
+    background: activeTab===id ? B.orange+"22" : "transparent",
+    borderLeft: activeTab===id ? `3px solid ${B.orange}` : "3px solid transparent",
+    color: activeTab===id ? B.orange : "#cfc3b8",
+    fontSize:12.5,fontWeight:700,...sf,
+  });
+
+  const Item = ({id,label,badge,indent}) => (
+    <button onClick={()=>setActiveTab(id)} style={itemStyle(id,indent)}>
+      <span>{label}</span>
+      {badge>0 && <span style={{background:B.brick,color:"#fff",borderRadius:10,
+        fontSize:10,padding:"1px 6px",fontWeight:700}}>{badge}</span>}
+    </button>
+  );
+
+  return (
+    <div style={{width:180,flexShrink:0,background:B.ink,display:"flex",
+      flexDirection:"column",overflowY:"auto",borderRight:"1px solid #3A3028"}}>
+      <div style={{padding:"18px 14px",marginBottom:8}}>
+        <div style={{background:B.rust,borderRadius:4,padding:"4px 10px",display:"inline-block",
+          fontWeight:900,fontSize:13,color:"#fff",letterSpacing:1,...sf}}>SEQUOIA</div>
+      </div>
+      <Item id="inbox"    label="📥 Inbox"    badge={inboxCount}/>
+      <Item id="queue"    label="📋 Queue"/>
+      <Item id="schedule" label="📅 Schedule"/>
+      <button onClick={()=>setRegistersOpen(o=>!o)}
+        style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",
+          textAlign:"left",padding:"8px 14px",border:"none",background:"transparent",cursor:"pointer",
+          color:"#cfc3b8",fontSize:12.5,fontWeight:700,...sf}}>
+        <span>🗂 Registers</span>
+        <span style={{fontSize:10}}>{registersOpen?"▾":"▸"}</span>
+      </button>
+      {registersOpen && <>
+        <Item id="projects"   label="📁 Projects"    indent={30}/>
+        <Item id="pm"         label="🔧 PM Register" indent={30}/>
+        <Item id="repairs"    label="🛠 Repairs"      indent={30}/>
+        <Item id="compliance" label="📋 Compliance"   indent={30}/>
+      </>}
+      <Item id="completed" label="✅ Completed"/>
+    </div>
+  );
+}
+
 // ─── SETTINGS ────────────────────────────────────────────────────────────────
 function SettingsPanel({settings, onSave, onClose, onRenameTeamMember}) {
   const [s,setS] = useState({...settings});
+  const [newEmail, setNewEmail] = useState("");
+  const escalation = s.escalation || DEFAULT_SETTINGS.escalation;
+
+  const addEscalationEmail = () => {
+    const email = newEmail.trim();
+    if(!email) return;
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { alert("Enter a valid email address."); return; }
+    setS(p=>{
+      const esc = p.escalation || DEFAULT_SETTINGS.escalation;
+      if(esc.emails.includes(email)) return p;
+      return {...p, escalation:{...esc, emails:[...esc.emails, email]}};
+    });
+    setNewEmail("");
+  };
+  const removeEscalationEmail = (email) => {
+    setS(p=>{
+      const esc = p.escalation || DEFAULT_SETTINGS.escalation;
+      return {...p, escalation:{...esc, emails:esc.emails.filter(e=>e!==email)}};
+    });
+  };
+  const setEscalationThreshold = (v) => {
+    setS(p=>{
+      const esc = p.escalation || DEFAULT_SETTINGS.escalation;
+      return {...p, escalation:{...esc, threshold: Math.max(1,+v||4)}};
+    });
+  };
+
   const addMember = (dept) => {
     const name = prompt("New team member name:");
     if(!name) return;
@@ -1568,6 +1691,35 @@ function SettingsPanel({settings, onSave, onClose, onRenameTeamMember}) {
           </div>
         ))}
       </div>
+
+      <div style={{marginBottom:20}}>
+        <div style={{fontWeight:700,fontSize:13,color:B.text,marginBottom:4,...sf}}>Escalation — Code Red Alerts</div>
+        <div style={{color:B.muted,fontSize:11,marginBottom:12,...sf}}>
+          Tasks rescheduled this many times in a row get flagged as Code Red on the Schedule tab.
+        </div>
+        <Field label="Reschedule threshold">
+          <Input type="number" value={escalation.threshold} onChange={e=>setEscalationThreshold(e.target.value)}/>
+        </Field>
+        <div style={{color:B.textDim,fontSize:10,fontWeight:700,textTransform:"uppercase",
+          letterSpacing:1,marginBottom:8,...sf}}>Recipients</div>
+        {escalation.emails.length===0 && (
+          <div style={{color:B.muted,fontSize:12,marginBottom:8,...sf}}>No recipients added yet.</div>
+        )}
+        {escalation.emails.map(email=>(
+          <div key={email} style={{display:"flex",justifyContent:"space-between",
+            alignItems:"center",padding:"6px 10px",background:B.surface2,
+            borderRadius:4,marginBottom:4}}>
+            <span style={{fontSize:13,color:B.text,...sf}}>{email}</span>
+            <button onClick={()=>removeEscalationEmail(email)}
+              style={{background:"none",border:"none",color:B.brick,cursor:"pointer",fontSize:12,...sf}}>✕</button>
+          </div>
+        ))}
+        <div style={{display:"flex",gap:6,marginTop:6}}>
+          <Input value={newEmail} onChange={e=>setNewEmail(e.target.value)} placeholder="name@sequoiafp.com"/>
+          <Btn variant="secondary" onClick={addEscalationEmail} style={{whiteSpace:"nowrap"}}>+ Add</Btn>
+        </div>
+      </div>
+
       <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
         <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
         <Btn onClick={()=>onSave(s)}>Save Settings</Btn>
@@ -1804,17 +1956,6 @@ export default function App({user, idToken, accessToken}) {
   const inboxCount = tasks.filter(t=>t.status==="Inbox").length;
   const safeSettings = settings||DEFAULT_SETTINGS;
 
-  const TABS = [
-    {id:"inbox",    label:"📥 Inbox",           badge:inboxCount},
-    {id:"queue",    label:"📋 Queue"},
-    {id:"schedule", label:"📅 Schedule"},
-    {id:"projects", label:"📁 Projects Register"},
-    {id:"pm",       label:"🔧 PM Register"},
-    {id:"repairs",  label:"🛠 Repairs"},
-    {id:"compliance",label:"📋 Compliance"},
-    {id:"completed",label:"✅ Completed"},
-  ];
-
 
   // ── Initial load + real-time subscriptions ──────────────────────────────────
   useEffect(()=>{
@@ -1863,7 +2004,7 @@ export default function App({user, idToken, accessToken}) {
 
 
   return (
-    <div style={{minHeight:"100vh",background:B.bg,...sf}}>
+    <div style={{height:"100vh",background:B.bg,...sf,display:"flex",flexDirection:"column"}}>
       {loading && (
         <div style={{position:"fixed",inset:0,background:B.ink,display:"flex",
           alignItems:"center",justifyContent:"center",zIndex:9999,flexDirection:"column",gap:16}}>
@@ -1874,8 +2015,8 @@ export default function App({user, idToken, accessToken}) {
           <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
         </div>
       )}
-      {/* Header */}
-      <div style={{background:B.ink,padding:"0 24px",display:"flex",
+      {/* Header — stays fixed, never scrolls */}
+      <div style={{flexShrink:0,background:B.ink,padding:"0 24px",display:"flex",
         justifyContent:"space-between",alignItems:"center",height:56}}>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           <div style={{background:B.rust,borderRadius:4,padding:"4px 10px",
@@ -1900,41 +2041,21 @@ export default function App({user, idToken, accessToken}) {
         </div>
       </div>
 
-      {/* Nav */}
-      <div style={{background:"#fff",borderBottom:`2px solid ${B.border}`,
-        display:"flex",overflowX:"auto",padding:"0 24px"}}>
-        {TABS.map(tab=>(
-          <button key={tab.id} onClick={()=>setActiveTab(tab.id)}
-            style={{
-              padding:"10px 16px",cursor:"pointer",fontWeight:700,fontSize:12,
-              whiteSpace:"nowrap",border:"none",
-              borderTop: activeTab===tab.id ? `2px solid ${B.orange}` : "2px solid transparent",
-              borderLeft: activeTab===tab.id ? `1px solid ${B.border}` : "1px solid transparent",
-              borderRight: activeTab===tab.id ? `1px solid ${B.border}` : "1px solid transparent",
-              borderBottom: activeTab===tab.id ? "1px solid #fff" : "none",
-              background: activeTab===tab.id ? "#fff" : "transparent",
-              color: activeTab===tab.id ? B.orange : B.textDim,
-              marginBottom: activeTab===tab.id ? -1 : 0,
-              borderRadius: "4px 4px 0 0",
-              ...sf
-            }}>
-            {tab.label}
-            {tab.badge>0 && <span style={{background:B.brick,color:"#fff",borderRadius:10,
-              fontSize:10,padding:"1px 6px",marginLeft:6,fontWeight:700}}>{tab.badge}</span>}
-          </button>
-        ))}
-      </div>
-
-      {/* Content */}
-      <div style={{maxWidth:1100,margin:"0 auto",padding:24}}>
-        {activeTab==="inbox"     && <InboxView tasks={tasks} setTasks={setTasks} settings={safeSettings} onEdit={setEditTask}/>}
-        {activeTab==="queue"     && <QueueView tasks={tasks} setTasks={setTasks} settings={safeSettings} onEdit={setEditTask} onSchedule={setScheduleTask}/>}
-        {activeTab==="schedule"  && <ScheduleView tasks={tasks} setTasks={setTasks} pmItems={pmItems} setPMItems={setPMItems} settings={safeSettings} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} onEdit={setEditTask} onReschedule={setScheduleTask}/>}
-        {activeTab==="projects"  && <ProjectsRegisterView tasks={tasks} setTasks={setTasks} settings={safeSettings} onEdit={setEditTask}/>}
-        {activeTab==="pm"        && <PMRegisterView pmItems={pmItems} setPMItems={setPMItems} tasks={tasks} setTasks={setTasks} partsData={partsData} setPartsData={setPartsData}/>}
-        {activeTab==="repairs"   && <RepairsView tasks={tasks} setTasks={setTasks} onEdit={setEditTask}/>}
-        {activeTab==="compliance"&& <ComplianceView tasks={tasks} setTasks={setTasks} onEdit={setEditTask}/>}
-        {activeTab==="completed" && <CompletedView tasks={tasks} setTasks={setTasks}/>}
+      {/* Sidebar + content — sidebar stays fixed, only content scrolls */}
+      <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+        <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} inboxCount={inboxCount}/>
+        <div style={{flex:1,overflowY:"auto"}}>
+          <div style={{maxWidth:1100,margin:"0 auto",padding:24}}>
+            {activeTab==="inbox"     && <InboxView tasks={tasks} setTasks={setTasks} settings={safeSettings} onEdit={setEditTask}/>}
+            {activeTab==="queue"     && <QueueView tasks={tasks} setTasks={setTasks} settings={safeSettings} onEdit={setEditTask} onSchedule={setScheduleTask}/>}
+            {activeTab==="schedule"  && <ScheduleView tasks={tasks} setTasks={setTasks} pmItems={pmItems} setPMItems={setPMItems} settings={safeSettings} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} onEdit={setEditTask} onReschedule={setScheduleTask}/>}
+            {activeTab==="projects"  && <ProjectsRegisterView tasks={tasks} setTasks={setTasks} settings={safeSettings} onEdit={setEditTask}/>}
+            {activeTab==="pm"        && <PMRegisterView pmItems={pmItems} setPMItems={setPMItems} tasks={tasks} setTasks={setTasks} partsData={partsData} setPartsData={setPartsData}/>}
+            {activeTab==="repairs"   && <RepairsView tasks={tasks} setTasks={setTasks} onEdit={setEditTask}/>}
+            {activeTab==="compliance"&& <ComplianceView tasks={tasks} setTasks={setTasks} onEdit={setEditTask}/>}
+            {activeTab==="completed" && <CompletedView tasks={tasks} setTasks={setTasks}/>}
+          </div>
+        </div>
       </div>
 
       {/* Modals */}
