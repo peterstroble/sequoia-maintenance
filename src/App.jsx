@@ -530,11 +530,6 @@ function ScheduleView({tasks, setTasks, pmItems, setPMItems, settings, selectedW
   };
   const returnToQueue = (id) => setTasks(ts=>ts.map(t=>t.id===id
     ?{...t,status:"Queue",assignee:"",weekOf:"",weeklyHours:""}:t));
-  const logHours = (id, add) => setTasks(ts=>ts.map(t=>{
-    if(t.id!==id) return t;
-    const logged = (+t.hoursLogged||0) + (+add||0);
-    return {...t,hoursLogged:String(logged)};
-  }));
 
   const deptSummary = (dept) => {
     const members = team[dept]||[];
@@ -646,7 +641,7 @@ function ScheduleView({tasks, setTasks, pmItems, setPMItems, settings, selectedW
                           </div>
                           <div style={{fontSize:12,color:B.text,fontWeight:600,marginBottom:4,...sf}}>{t.title}</div>
                           <div style={{fontSize:11,color:B.muted,marginBottom:6,...sf}}>
-                            {t.weeklyHours}h this week · {t.hoursLogged||0}h logged
+                            {t.weeklyHours}h this week
                             {t.estHours && ` · ${t.estHours}h est.`}
                           </div>
                           {(t.originalScheduledDate || +t.rescheduleCount>0) && (
@@ -656,13 +651,7 @@ function ScheduleView({tasks, setTasks, pmItems, setPMItems, settings, selectedW
                               {+t.rescheduleCount>0 && <>Rescheduled {t.rescheduleCount}×</>}
                             </div>
                           )}
-                          {/* Progress bar */}
-                          <div style={{height:4,background:B.surface2,borderRadius:2,marginBottom:6}}>
-                            <div style={{height:"100%",width:`${Math.min(100,Math.round((+t.hoursLogged||0)/(+t.estHours||1)*100))}%`,
-                              background:B.teal,borderRadius:2}}/>
-                          </div>
                           <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                            <HoursLogger task={t} onLog={add=>logHours(t.id,add)}/>
                             <Btn style={{padding:"3px 8px",fontSize:10}} onClick={()=>markDone(t.id)}>✓ Done</Btn>
                             <Btn variant="secondary" style={{padding:"3px 8px",fontSize:10}} onClick={()=>onEdit(t)}>Edit</Btn>
                             {onReschedule && <Btn variant="secondary" style={{padding:"3px 8px",fontSize:10}} onClick={()=>onReschedule(t)}>Reschedule</Btn>}
@@ -685,20 +674,6 @@ function ScheduleView({tasks, setTasks, pmItems, setPMItems, settings, selectedW
           Nothing scheduled for this week yet. Pull tasks from the Queue.
         </div>
       )}
-    </div>
-  );
-}
-
-function HoursLogger({task, onLog}) {
-  const [open,setOpen] = useState(false);
-  const [val,setVal]   = useState("");
-  if(!open) return <Btn variant="secondary" style={{padding:"3px 8px",fontSize:10}} onClick={()=>setOpen(true)}>+ Hrs</Btn>;
-  return (
-    <div style={{display:"flex",gap:4,alignItems:"center"}}>
-      <input type="number" value={val} onChange={e=>setVal(e.target.value)} placeholder="h"
-        style={{width:40,border:`1px solid ${B.border}`,borderRadius:3,padding:"2px 4px",fontSize:11,...sf}}/>
-      <Btn style={{padding:"3px 8px",fontSize:10}} onClick={()=>{if(val){onLog(val);setOpen(false);setVal("");}}}> Log</Btn>
-      <Btn variant="secondary" style={{padding:"3px 8px",fontSize:10}} onClick={()=>setOpen(false)}>✕</Btn>
     </div>
   );
 }
