@@ -289,17 +289,12 @@ function TaskForm({task, settings, onSave, onClose, pmItems}) {
           <Input type="number" value={form.estHours} onChange={f("estHours")} placeholder="0"/>
         </Field>
         {!isNew && form.status==="Scheduled" && (
-          <>
-            <Field label="Assigned To">
-              <Sel value={form.assignee} onChange={f("assignee")}>
-                <option value="">Unassigned</option>
-                {deptPeople.map(p=><option key={p.name}>{p.name}</option>)}
-              </Sel>
-            </Field>
-            <Field label="Hours This Week">
-              <Input type="number" value={form.weeklyHours} onChange={f("weeklyHours")} placeholder="0"/>
-            </Field>
-          </>
+          <Field label="Assigned To">
+            <Sel value={form.assignee} onChange={f("assignee")}>
+              <option value="">Unassigned</option>
+              {deptPeople.map(p=><option key={p.name}>{p.name}</option>)}
+            </Sel>
+          </Field>
         )}
         <Field label="Notes" col="1 / -1">
           <Textarea value={form.notes} onChange={f("notes")} rows={2}/>
@@ -324,7 +319,6 @@ function TaskForm({task, settings, onSave, onClose, pmItems}) {
 function ScheduleModal({task, settings, onSave, onClose}) {
   const [weekOf,  setWeekOf]  = useState(task?.weekOf || nextMonday());
   const [assignee,setAssignee]= useState(task?.assignee||"");
-  const [hours,   setHours]   = useState(task?.weeklyHours||task?.estHours||"");
   const team = settings?.team||DEFAULT_SETTINGS.team;
   const allPeople = Object.entries(team).flatMap(([dept,ms])=>ms.map(m=>({...m,dept})));
 
@@ -348,13 +342,10 @@ function ScheduleModal({task, settings, onSave, onClose}) {
             style={{padding:"5px 10px"}}>→</Btn>
         </div>
       </Field>
-      <Field label="Hours This Week">
-        <Input type="number" value={hours} onChange={e=>setHours(e.target.value)} placeholder="0"/>
-      </Field>
       <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:16}}>
         <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
         <Btn disabled={!assignee} onClick={()=>onSave({
-          ...task, status:"Scheduled", assignee, weekOf, weeklyHours:hours,
+          ...task, status:"Scheduled", assignee, weekOf,
           scheduledBy: currentUser(),
         })}>Schedule</Btn>
       </div>
@@ -535,7 +526,7 @@ function ScheduleView({tasks, setTasks, pmItems, setPMItems, settings, selectedW
     const members = team[dept]||[];
     const cap = members.reduce((s,m)=>s+(+m.hours||40),0);
     const sched = weekTasks.filter(t=>members.some(m=>m.name===t.assignee))
-      .reduce((s,t)=>s+(+t.weeklyHours||0),0);
+      .reduce((s,t)=>s+(+t.estHours||0),0);
     return {cap,sched,bal:cap-sched};
   };
 
@@ -597,7 +588,7 @@ function ScheduleView({tasks, setTasks, pmItems, setPMItems, settings, selectedW
               gap:12,padding:12,border:`1px solid ${B.border}`,borderTop:"none",borderRadius:"0 0 5px 5px"}}>
               {members.map(member=>{
                 const myTasks = weekTasks.filter(t=>t.assignee===member.name);
-                const myHrs = myTasks.reduce((s,t)=>s+(+t.weeklyHours||0),0);
+                const myHrs = myTasks.reduce((s,t)=>s+(+t.estHours||0),0);
                 const myPct = member.hours>0?Math.round(myHrs/member.hours*100):0;
                 const barColor = myPct>100?B.brick:myPct>80?B.gold:B.orange;
                 return (
@@ -641,8 +632,7 @@ function ScheduleView({tasks, setTasks, pmItems, setPMItems, settings, selectedW
                           </div>
                           <div style={{fontSize:12,color:B.text,fontWeight:600,marginBottom:4,...sf}}>{t.title}</div>
                           <div style={{fontSize:11,color:B.muted,marginBottom:6,...sf}}>
-                            {t.weeklyHours}h this week
-                            {t.estHours && ` · ${t.estHours}h est.`}
+                            {t.estHours||0}h est.
                           </div>
                           {(t.originalScheduledDate || +t.rescheduleCount>0) && (
                             <div style={{fontSize:10,color:B.muted,marginBottom:6,...sf}}>
