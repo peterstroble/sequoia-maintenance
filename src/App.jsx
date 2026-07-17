@@ -1595,16 +1595,17 @@ function Sidebar({activeTab, setActiveTab, inboxCount}) {
       <Item id="schedule" label="📅 Schedule"/>
       <button onClick={()=>setRegistersOpen(o=>!o)}
         style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",
-          textAlign:"left",padding:"8px 14px",border:"none",background:"transparent",cursor:"pointer",
+          textAlign:"left",padding:"8px 14px",border:"none",borderLeft:"3px solid transparent",
+          background:"transparent",cursor:"pointer",
           color:"#cfc3b8",fontSize:12.5,fontWeight:700,...sf}}>
         <span>🗂 Registers</span>
         <span style={{fontSize:10}}>{registersOpen?"▾":"▸"}</span>
       </button>
       {registersOpen && <>
-        <Item id="projects"   label="📁 Projects"    indent={30}/>
-        <Item id="pm"         label="🔧 PM Register" indent={30}/>
-        <Item id="repairs"    label="🛠 Repairs"      indent={30}/>
-        <Item id="compliance" label="📋 Compliance"   indent={30}/>
+        <Item id="pm"         label="Prev. Maint." indent={30}/>
+        <Item id="projects"   label="Projects"     indent={30}/>
+        <Item id="repairs"    label="Repairs"      indent={30}/>
+        <Item id="compliance" label="Compliance"   indent={30}/>
       </>}
       <Item id="completed" label="✅ Completed"/>
     </div>
