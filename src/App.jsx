@@ -530,6 +530,70 @@ function ScheduleView({tasks, setTasks, pmItems, setPMItems, settings, selectedW
     return {cap,sched,bal:cap-sched};
   };
 
+  const printSchedule = () => {
+    const esc = (s) => String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const deptSections = Object.entries(team).map(([dept,members])=>{
+      const memberBlocks = members.map(member=>{
+        const myTasks = weekTasks.filter(t=>t.assignee===member.name);
+        const myHrs = myTasks.reduce((s,t)=>s+(+t.estHours||0),0);
+        const rows = myTasks.length===0
+          ? `<tr><td colspan="5" class="empty">No tasks scheduled</td></tr>`
+          : myTasks.map(t=>`
+            <tr>
+              <td class="chk">☐</td>
+              <td class="id">${esc(t.id)}</td>
+              <td>${esc(t.title)}${t.machine?`<div class="machine">⚙ ${esc(t.machine)}</div>`:""}</td>
+              <td class="type">${esc(t.type)}</td>
+              <td class="hrs">${esc(t.estHours||0)}h</td>
+            </tr>`).join("");
+        return `
+          <div class="member">
+            <div class="member-head"><strong>${esc(member.name)}</strong><span>${myHrs}h / ${esc(member.hours)}h</span></div>
+            <table><thead><tr><th></th><th>#</th><th>Task</th><th>Type</th><th>Est.</th></tr></thead>
+            <tbody>${rows}</tbody></table>
+          </div>`;
+      }).join("");
+      return `<div class="dept"><h2>${esc(dept)}</h2>${memberBlocks}</div>`;
+    }).join("");
+
+    const w = window.open("", "_blank", "width=900,height=700");
+    if(!w) { alert("Pop-up blocked — allow pop-ups for this site to print."); return; }
+    w.document.write(`<!doctype html><html><head><title>Weekly Schedule — ${esc(fmtWeek(selectedWeek))}</title>
+      <style>
+        body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:24px;font-size:12px}
+        .head{display:flex;justify-content:space-between;align-items:baseline;
+          border-bottom:3px solid #AD4C25;padding-bottom:8px;margin-bottom:16px}
+        .head h1{margin:0;font-size:18px}
+        .head .brand{font-weight:900;letter-spacing:2px;color:#AD4C25;font-size:13px}
+        .dept{margin-bottom:20px;page-break-inside:avoid}
+        .dept h2{font-size:14px;background:#eee;padding:6px 10px;margin:0 0 8px;border-left:4px solid #EE7425}
+        .member{margin:0 0 12px 10px;page-break-inside:avoid}
+        .member-head{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px}
+        table{width:100%;border-collapse:collapse}
+        th{font-size:9px;text-transform:uppercase;letter-spacing:.5px;text-align:left;
+          border-bottom:1px solid #999;padding:3px 6px;color:#555}
+        td{border-bottom:1px solid #ddd;padding:5px 6px;vertical-align:top}
+        td.chk{width:20px;font-size:14px}
+        td.id{width:36px;font-weight:700;color:#AD4C25;white-space:nowrap}
+        td.type{width:70px}
+        td.hrs{width:40px;text-align:right;white-space:nowrap}
+        td.empty{color:#999;font-style:italic}
+        .machine{color:#666;font-size:10px;margin-top:2px}
+        .foot{margin-top:20px;color:#888;font-size:10px;text-align:right}
+        @media print{ .noprint{display:none} }
+      </style></head><body>
+      <div class="head">
+        <div><div class="brand">SEQUOIA FOREST PRODUCTS</div><h1>Weekly Maintenance Schedule</h1></div>
+        <div style="font-size:14px;font-weight:700">${esc(fmtWeek(selectedWeek))}</div>
+      </div>
+      ${deptSections}
+      <div class="foot">Printed ${new Date().toLocaleString("en-US")} · Sequoia Maintenance System</div>
+      </body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(()=>w.print(), 250);
+  };
+
   return (
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
@@ -541,6 +605,7 @@ function ScheduleView({tasks, setTasks, pmItems, setPMItems, settings, selectedW
           <Btn variant="secondary" onClick={()=>setSelectedWeek(monStart(addDays(selectedWeek,-7)))}>← Prev</Btn>
           <Btn variant="secondary" onClick={()=>setSelectedWeek(monStart(todayStr()))}>This Week</Btn>
           <Btn variant="secondary" onClick={()=>setSelectedWeek(monStart(addDays(selectedWeek,7)))}>Next →</Btn>
+          <Btn variant="teal" onClick={printSchedule}>🖨 Print / PDF</Btn>
         </div>
       </div>
 
